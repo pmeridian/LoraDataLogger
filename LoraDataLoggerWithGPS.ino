@@ -40,6 +40,12 @@ volatile byte wdt_counter=0;//Counter for Watch Dog
 byte previousADCSRA;
 
 //#define DEBUG
+//#define DEBUG_GPS_MODE
+
+//This make the GPS module enter in AlwaysLocate 
+// "PMTK225,8" is for AlwaysLocate standby mode
+// "PMTK225,8" is for AlwaysLocate backup mode (1ma consumption)
+uint8_t GPS_MODE[] = "PMTK225,9";
 
 void setup() {
   // put your setup code here, to run once:
@@ -49,11 +55,27 @@ void setup() {
   Serial.println("Start LoRa Client");
   if (!rf95.init())
     Serial.println("init failed");
+  
   initRadio();
+
+  sendGPSCommand((char*)GPS_MODE);
+
+#ifdef DEBUG_GPS_MODE
+  for (unsigned long start = millis(); millis() - start < 1000;)
+  {
+    while (ss.available())
+    {
+      char c = ss.read();
+      Serial.write(c); // uncomment this line if you want to see the GPS data flowing
+    }
+  } 
+#endif
+  
   sensors.setWaitForConversion(true);
   sensors.setCheckForConversion(true);
   sensors.begin();
   findTempSensor();
+  
   setup_watchdog(9);//Set up WatchDog interupt time
 // 0=16ms, 1=32ms,2=64ms,3=128ms,4=250ms,5=500ms
 // 6=1 sec,7=2 sec, 8=4 sec, 9= 8sec
@@ -340,4 +362,17 @@ void wakeup() {
     // BOD is automatically restarted at wakeup
 }
 
+void sendGPSCommand(const char *str) {
+  ss.write("$");
+  uint8_t checksum = 0;
+  for (uint8_t i = 0; str[i] != '\0'; i++)
+  {
+    ss.write(str[i]);
+    checksum = checksum ^ str[i];
+  }
+  ss.write("*");
+  ss.print(checksum, HEX);  
+  ss.write('\r');
+  ss.write('\n');
+}
 
