@@ -44,8 +44,8 @@ byte previousADCSRA;
 
 //This make the GPS module enter in AlwaysLocate 
 // "PMTK225,8" is for AlwaysLocate standby mode
-// "PMTK225,9" is for AlwaysLocate backup mode (1ma consumption)
-uint8_t GPS_MODE[] = "PMTK225,9";
+// "PMTK225,9" is for AlwaysLocate backup mode 
+uint8_t GPS_MODE[] = "PMTK225,8";
 
 void setup() {
   // put your setup code here, to run once:
@@ -75,7 +75,7 @@ void setup() {
   sensors.setCheckForConversion(true);
   sensors.begin();
   findTempSensor();
-  
+
   setup_watchdog(9);//Set up WatchDog interupt time
 // 0=16ms, 1=32ms,2=64ms,3=128ms,4=250ms,5=500ms
 // 6=1 sec,7=2 sec, 8=4 sec, 9= 8sec
