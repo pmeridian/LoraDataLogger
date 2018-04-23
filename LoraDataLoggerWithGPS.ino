@@ -45,7 +45,8 @@ byte previousADCSRA;
 //This make the GPS module enter in AlwaysLocate 
 // "PMTK225,8" is for AlwaysLocate standby mode
 // "PMTK225,9" is for AlwaysLocate backup mode 
-uint8_t GPS_MODE[] = "PMTK225,8";
+uint8_t GPS_POWERSAVE_MODE[] = "PMTK225,8";
+bool gpsPowerSaveMode = false;
 
 void setup() {
   // put your setup code here, to run once:
@@ -57,8 +58,6 @@ void setup() {
     Serial.println("init failed");
   
   initRadio();
-
-  sendGPSCommand((char*)GPS_MODE);
 
 #ifdef DEBUG_GPS_MODE
   for (unsigned long start = millis(); millis() - start < 1000;)
@@ -197,7 +196,14 @@ void getGPS()
     if ( age == TinyGPS::GPS_INVALID_AGE)
       strLogline += "0.0;0.0;0/0/0 00:00:00;";
     else
-    { 
+    {
+      //wait until we get a fix to send GPS to AlwaysLocate mode
+      if (!gpsPowerSaveMode)
+      {   
+         sendGPSCommand((char*)GPS_POWERSAVE_MODE);
+         gpsPowerSaveMode=true;
+      }
+ 
       strLogline += (flat == TinyGPS::GPS_INVALID_F_ANGLE ? 0.0 : flat);
       strLogline += ';';
       strLogline += (flon == TinyGPS::GPS_INVALID_F_ANGLE ? 0.0 : flon);
