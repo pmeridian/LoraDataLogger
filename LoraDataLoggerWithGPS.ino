@@ -44,7 +44,7 @@ byte previousADCSRA;
 
 //This make the GPS module enter in AlwaysLocate 
 // "PMTK225,8" is for AlwaysLocate standby mode
-// "PMTK225,8" is for AlwaysLocate backup mode (1ma consumption)
+// "PMTK225,9" is for AlwaysLocate backup mode (1ma consumption)
 uint8_t GPS_MODE[] = "PMTK225,9";
 
 void setup() {
