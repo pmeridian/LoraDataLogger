@@ -12,12 +12,12 @@ float frequency = 868.0;
 #include <TinyGPS.h>
 
 TinyGPS gps;
-SoftwareSerial ss(4, 3);
+SoftwareSerial ss(12, 11);
 
 #include <OneWire.h>             // library for Onewire
 #include <DallasTemperature.h>   //library for handling temperature sensors
 // Data wire is plugged into pin 5 on the Arduino
-#define ONE_WIRE_BUS 5
+#define ONE_WIRE_BUS 3
 // Setup a oneWire instance to communicate with any OneWire devices (not just Maxim/Dallas temperature ICs)
 OneWire oneWire(ONE_WIRE_BUS);
 // Pass our oneWire reference to Dallas Temperature. 
@@ -42,11 +42,19 @@ byte previousADCSRA;
 //#define DEBUG
 //#define DEBUG_GPS_MODE
 
-//This make the GPS module enter in AlwaysLocate 
+// L80 GPS module powersaving modes
 // "PMTK225,8" is for AlwaysLocate standby mode
-// "PMTK225,9" is for AlwaysLocate backup mode 
-uint8_t GPS_POWERSAVE_MODE[] = "PMTK225,8";
+// "PMTK225,9" is for AlwaysLocate backup mode
+// "PMTK161,0" is for standby mode 
+uint8_t GPS_POWERSAVE_MODE[] = "PMTK161,0";
 bool gpsPowerSaveMode = false;
+bool gpsFix = false;
+
+//Set up WatchDog interupt time
+// 0=16ms, 1=32ms,2=64ms,3=128ms,4=250ms,5=500ms
+// 6=1 sec,7=2 sec, 8=4 sec, 9= 8sec
+#define WDT_TIME 9
+#define WDT_CYCLES 8
 
 void setup() {
   // put your setup code here, to run once:
@@ -58,37 +66,22 @@ void setup() {
     Serial.println("init failed");
   
   initRadio();
-
-#ifdef DEBUG_GPS_MODE
-  for (unsigned long start = millis(); millis() - start < 1000;)
-  {
-    while (ss.available())
-    {
-      char c = ss.read();
-      Serial.write(c); // uncomment this line if you want to see the GPS data flowing
-    }
-  } 
-#endif
-  
   sensors.setWaitForConversion(true);
   sensors.setCheckForConversion(true);
   sensors.begin();
   findTempSensor();
 
-  setup_watchdog(9);//Set up WatchDog interupt time
-// 0=16ms, 1=32ms,2=64ms,3=128ms,4=250ms,5=500ms
-// 6=1 sec,7=2 sec, 8=4 sec, 9= 8sec
   delay(100);
+  setup_watchdog(WDT_TIME); 
   Sleep_avr();
 }
 
 void loop() {
-  wakeup();
   // put your main code here, to run repeatedly:
-  if (wdt_counter >= 8)
+  if (wdt_counter >= WDT_CYCLES)
   {
-    wdt_counter=0;
-    delay(500);
+    wakeup();
+    wdt_counter=0;     
     strLogline = "";
     getGPS();
     getTemp();
@@ -120,6 +113,8 @@ void initRadio()
   
   // Setup Coding Rate:5(4/5),6(4/6),7(4/7),8(4/8) 
   rf95.setCodingRate4(5);
+  Serial.print("RF95 initialized freq ");
+  Serial.println(frequency);
 }
 
 void sendRadio()
@@ -128,9 +123,7 @@ void sendRadio()
   int messageSize=strLogline.length();
   uint8_t data[messageSize+1];
   strLogline.toCharArray((char*)data,messageSize+1); 
-
    
-  Serial.println("Sending data:");
   Serial.println(strLogline);
 
   rf95.send(data, sizeof(data));
@@ -166,22 +159,24 @@ void sendRadio()
 void getGPS()
 {
   bool newData = false;
+  gpsFix=false;
+  
   unsigned long chars;
   unsigned short sentences, failed;
 
   // For one second we parse GPS data and report some key values
   for (unsigned long start = millis(); millis() - start < 1000;)
-  {
-    while (ss.available())
     {
-      char c = ss.read();
+      while (ss.available())
+      {
+        char c = ss.read();
 #ifdef DEBUG     
-      Serial.write(c); // uncomment this line if you want to see the GPS data flowing
+        Serial.write(c); // uncomment this line if you want to see the GPS data flowing
 #endif
-      if (gps.encode(c)) // Did a new valid sentence come in?
-        newData = true;
+        if (gps.encode(c)) // Did a new valid sentence come in?
+          newData = true;
+      }
     }
-  }
 
   if (newData)
   {
@@ -197,13 +192,7 @@ void getGPS()
       strLogline += "0.0;0.0;0/0/0 00:00:00;";
     else
     {
-      //wait until we get a fix to send GPS to AlwaysLocate mode
-      if (!gpsPowerSaveMode)
-      {   
-         sendGPSCommand((char*)GPS_POWERSAVE_MODE);
-         gpsPowerSaveMode=true;
-      }
- 
+      gpsFix=true;
       strLogline += (flat == TinyGPS::GPS_INVALID_F_ANGLE ? 0.0 : flat);
       strLogline += ';';
       strLogline += (flon == TinyGPS::GPS_INVALID_F_ANGLE ? 0.0 : flon);
@@ -265,6 +254,14 @@ void findTempSensor()
           Serial.println("Cannot find a sensor");
           return;
        } 
+       Serial.print("DS18B20 sensor #");
+       Serial.print(iSensor);
+       Serial.print(" ");
+       String address;
+       for (int iWord=7;iWord>=0;--iWord) //read address from MSB to LSB (DS18B20 address ends with 28)
+          address+=String(sensors_address[iSensor][iWord],HEX);
+       address.toUpperCase(); //nicely put everything in upper case
+       Serial.println(address);
   }
 
 }
@@ -277,16 +274,14 @@ void getTemp(){
   
   for (uint8_t nMeas=0;nMeas< N_MEASUREMENTS ;++nMeas)
   { 
-    sensors.requestTemperatures(); //start temp conversion for all devices at the same time. 12bit conversion is 750ms   
-    delay(1000);
-        
+    sensors.requestTemperatures(); //start temp conversion for all devices at the same time. 12bit conversion is 750ms
+    delay(1000);   
     for (uint8_t iSensor=0;iSensor<nSensors;++iSensor)
     {
       delay(100);
       //sensors.requestTemperaturesByAddress( (uint8_t*)&sensors_address[iSensor][0] ); //start temp conversion. 12bit conversion is 750ms      
       tMeas[iSensor]+=sensors.getTempC( (uint8_t*)&sensors_address[iSensor][0] ); //read data from sensor and increase average;     
     }
-    delay(500);
   }
   
   for (uint8_t iSensor=0;iSensor<nSensors;++iSensor)
@@ -317,7 +312,6 @@ void setup_watchdog(int time) {
 
   MCUSR &= ~( 1 << WDRF );//Clear WDRF in MCUSR
   
-  // 启动时序
   WDTCSR |= ( 1 << WDCE) | ( 1 << WDE );
   
   // set up new watchdog timeout
@@ -332,6 +326,16 @@ ISR(WDT_vect) {
 
 void Sleep_avr(){
   rf95.sleep();
+  if (!gpsPowerSaveMode && gpsFix) //only send GPS low power mode if there was already a gps fix
+    {
+#ifdef DEBUG_GPS_MODE
+         Serial.println("GPS Entering standby mode");
+         delay(100);
+#endif   
+         sendGPSCommand((char*)GPS_POWERSAVE_MODE);
+         gpsPowerSaveMode=true;
+     }
+     
   set_sleep_mode(SLEEP_MODE_PWR_DOWN); // set up sleep mode
   sleep_enable();
 
@@ -351,7 +355,8 @@ void Sleep_avr(){
   power_timer0_disable(); //Needed for delay and millis()
   power_timer1_disable();
   power_timer2_disable(); //Needed for asynchronous 32kHz operation
-  sleep_mode();                        // entering sleep mode
+  sleep_mode();// entering sleep mode
+
 }
 
 void wakeup() {
@@ -363,9 +368,17 @@ void wakeup() {
     power_timer1_enable();
     power_timer2_enable();
     power_adc_enable();
-    ADCSRA = previousADCSRA;
-
+    ADCSRA = previousADCSRA; 
     // BOD is automatically restarted at wakeup
+    if (gpsPowerSaveMode)
+    {
+#ifdef DEBUG_GPS_MODE
+         Serial.println("GPS Back to normal mode. Wait 500ms for a new fix");
+#endif         
+         sendGPSCommand("PMTK225,0"); //Full on mode for GPS
+         gpsPowerSaveMode=false;
+         delay(500);
+     }
 }
 
 void sendGPSCommand(const char *str) {
